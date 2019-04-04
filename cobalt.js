@@ -63,6 +63,56 @@ var cobalt = window.cobalt || {
       cobalt.private.divLog(logString)
     }
   },
+  publish: function(channel, message){
+    if (!message) message = {};
+    if (typeof channel !== "string") {
+      cobalt.log('pubsub error : channel must be a string.')
+      return false
+    }
+    if (typeof message !== "object" || Array.isArray(message)) {
+      cobalt.log('pubsub error : message must be an object.')
+      return false
+    }
+    cobalt.private.send({ type : "pubsub", action : "publish", channel : channel, message : message});
+    if (cobalt.private.debugInBrowser){
+      //use a storage fallback for debugging.
+      console.log('sending cobalt pubsub for channel', channel, 'with message', message);
+      localStorage.setItem('COBALT:DEBUG:PUBSUB:' + channel, JSON.stringify(message));
+    }
+  },
+  subscribe: function(channel, callback){
+    if (typeof channel !== "string") {
+      cobalt.log('pubsub error : channel must be a string.')
+      return false
+    }
+    var callback_id = cobalt.registerCallback(callback)
+    if (typeof callback_id !== "string") {
+      cobalt.log('pubsub error : callback must be function.');
+      return false
+    }
+    cobalt.private.send({ type : "pubsub", action : "subscribe", channel : channel, callback : callback_id });
+
+    if (cobalt.debugInBrowser) {
+      //use a storage fallback for debugging.
+      setInterval(function() {
+        var msg = localStorage.getItem('COBALT:DEBUG:PUBSUB:' + channel);
+        if (msg) {
+          var message = JSON.parse(msg);
+          console.log('received cobalt pubsub event for channel', channel, 'with message', message);
+          callback(message);
+          localStorage.removeItem('COBALT:DEBUG:PUBSUB:' + channel);
+        }
+      }, 500);
+    }
+  },
+  unsubscribe: function(channel){
+    if (typeof channel !== "string") {
+      cobalt.log('pubsub error : channel must be a string.');
+      return false
+    }
+    cobalt.private.send({ type : "pubsub", action : "unsubscribe", channel : channel  });
+    // TODO missing debugInBrowser unsubscribe.
+  },
   navigate: {
     push: function(options) {
       if (options && (options.page || options.controller)) {
@@ -134,97 +184,6 @@ var cobalt = window.cobalt || {
       if (cobalt.private.debugInBrowser && window.event && window.event.altKey) {
         window.close();
       }
-    }
-  },
-  toast: function(text) {
-    cobalt.private.send({type: "ui", control: "toast", data: {message: cobalt.private.utils.logToString(text)}});
-  },
-  alert: function(options) {
-    var obj = {};
-    if (options && (options.message || options.title )) {
-      if (typeof options === "string") {
-        options = {message: options};
-      }
-      cobalt.private.utils.extend(obj, {
-        title: options.title,
-        message: options.message,
-        //ensure buttons is an array of strings or default to one Ok button
-        buttons: (options.buttons && cobalt.private.utils.isArray(options.buttons) && options.buttons.length) ? options.buttons : ['Ok'],
-        //only supported on Android
-        cancelable: (options.cancelable) ? true : false
-      });
-      var callback = ( typeof options.callback === "string" || typeof options.callback === "function" ) ? options.callback : undefined;
-      cobalt.private.send({
-        type: "ui", control: "alert", data: obj
-      }, callback);
-      if (cobalt.private.debugInBrowser) {
-        var btns_str = "";
-        cobalt.private.utils.each(obj.buttons, function(index, button) {
-          btns_str += "\t" + index + " - " + button + "\n";
-        });
-        var index = parseInt(window.prompt(
-          "Title : " + obj.title + "\n"
-          + "Message : " + obj.message + "\n"
-          + "Choices : \n" + btns_str, 0), 10);
-
-        switch (typeof callback) {
-          case "function":
-            callback({index: isNaN(index) ? undefined : index});
-            break;
-          case "string":
-            var str_call = callback + "({index : " + index + "})";
-            try {
-              eval(str_call);
-            } catch (e) {
-              cobalt.log('failed to call ', str_call);
-            }
-            break;
-        }
-      }
-    }
-  },
-  pullToRefresh: {
-    setTexts: function(pullToRefreshText, refreshingText) {
-      if (typeof pullToRefreshText !== "string") pullToRefreshText = undefined;
-      if (typeof refreshingText !== "string") pullToRefreshText = undefined
-      cobalt.private.send({
-        type: "ui",
-        control: "pullToRefresh",
-        data: {
-          action: "setTexts",
-          texts: {
-            pullToRefresh: pullToRefreshText,
-            refreshing: refreshingText
-          }
-        }
-      });
-    }
-  },
-  webLayer: {
-    show: function(page, fadeDuration) {
-      if (page) {
-        cobalt.private.send({type: "webLayer", action: "show", data: {page: page, fadeDuration: fadeDuration}})
-      }
-    },
-    dismiss: function(data) {
-      cobalt.private.send({type: "webLayer", action: "dismiss", data: data});
-    },
-    bringToFront: function() {
-      cobalt.private.send({type: "webLayer", action: "bringToFront"});
-    },
-    sendToBack: function() {
-      cobalt.private.send({type: "webLayer", action: "sendToBack"});
-    }
-  },
-  openExternalUrl: function(url) {
-    if (url) {
-      cobalt.private.send({
-        type: "intent",
-        action: "openExternalUrl",
-        data: {
-          url: url
-        }
-      });
     }
   },
   nativeBars: {
@@ -361,6 +320,97 @@ var cobalt = window.cobalt || {
       if (this.storage) {
         return this.storage.removeItem(uid)
       }
+    }
+  },
+  webLayer: {
+    show: function(page, fadeDuration) {
+      if (page) {
+        cobalt.private.send({type: "webLayer", action: "show", data: {page: page, fadeDuration: fadeDuration}})
+      }
+    },
+    dismiss: function(data) {
+      cobalt.private.send({type: "webLayer", action: "dismiss", data: data});
+    },
+    bringToFront: function() {
+      cobalt.private.send({type: "webLayer", action: "bringToFront"});
+    },
+    sendToBack: function() {
+      cobalt.private.send({type: "webLayer", action: "sendToBack"});
+    }
+  },
+  alert: function(options) {
+    var obj = {};
+    if (options && (options.message || options.title )) {
+      if (typeof options === "string") {
+        options = {message: options};
+      }
+      cobalt.private.utils.extend(obj, {
+        title: options.title,
+        message: options.message,
+        //ensure buttons is an array of strings or default to one Ok button
+        buttons: (options.buttons && cobalt.private.utils.isArray(options.buttons) && options.buttons.length) ? options.buttons : ['Ok'],
+        //only supported on Android
+        cancelable: (options.cancelable) ? true : false
+      });
+      var callback = ( typeof options.callback === "string" || typeof options.callback === "function" ) ? options.callback : undefined;
+      cobalt.private.send({
+        type: "ui", control: "alert", data: obj
+      }, callback);
+      if (cobalt.private.debugInBrowser) {
+        var btns_str = "";
+        cobalt.private.utils.each(obj.buttons, function(index, button) {
+          btns_str += "\t" + index + " - " + button + "\n";
+        });
+        var index = parseInt(window.prompt(
+          "Title : " + obj.title + "\n"
+          + "Message : " + obj.message + "\n"
+          + "Choices : \n" + btns_str, 0), 10);
+
+        switch (typeof callback) {
+          case "function":
+            callback({index: isNaN(index) ? undefined : index});
+            break;
+          case "string":
+            var str_call = callback + "({index : " + index + "})";
+            try {
+              eval(str_call);
+            } catch (e) {
+              cobalt.log('failed to call ', str_call);
+            }
+            break;
+        }
+      }
+    }
+  },
+  toast: function(text) {
+    cobalt.private.send({type: "ui", control: "toast", data: {message: cobalt.private.utils.logToString(text)}});
+  },
+  openExternalUrl: function(url) {
+    if (url) {
+      cobalt.private.send({
+        type: "intent",
+        action: "openExternalUrl",
+        data: {
+          url: url
+        }
+      });
+    }
+  },
+  pullToRefresh: {
+    setTexts: function(pullToRefreshText, refreshingText) {
+      if (typeof pullToRefreshText !== "string") pullToRefreshText = undefined;
+      if (typeof refreshingText !== "string") pullToRefreshText = undefined
+      cobalt.private.send({
+        type: "ui",
+        control: "pullToRefresh",
+        data: {
+          action: "setTexts",
+          texts: {
+            pullToRefresh: pullToRefreshText,
+            refreshing: refreshingText
+          }
+        }
+      });
     }
   },
   plugins: {
